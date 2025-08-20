@@ -1,9 +1,11 @@
 import os
 import paramiko
+import posixpath
 from paramiko.ssh_exception import AuthenticationException, SSHException
 from dotenv import load_dotenv
 from contextlib import contextmanager
 import logging
+from pathlib import Path
 
 load_dotenv()
 
@@ -15,8 +17,8 @@ PORT = int(os.getenv("PORT"))
 USER = os.getenv("USER")
 PASSWORD = os.getenv("PASSWORD")
 
-virtual = "./second_map"
-local = "second_map_example/"
+virtual = "second_map"
+local = "second_map_example"
 
 
 @contextmanager
@@ -60,78 +62,50 @@ def sftp_connect(host: str, port: int, user: str, password: str):
                 logger.error('client.close() error')
 
 
-def copy_directory(sftp_connection, directory_name: str):
-    """recursive deleting for directories"""
+def copy_directory(sftp_connection, local_path: str, virtual_path):
+    """recursive coping for directories"""
     try:
-        os.chdir(directory_name)
-    except IOError:
-        logger.error("problem with deleting files, smth with local path")
-
-    try:
-        sftp_connection.mkdir(directory_name)
+        sftp_connection.mkdir(virtual_path)
     except Exception as e:
         logger.error("problem with making new virtual directory")
 
-    try:
-        sftp_connection.chdir(directory_name)
-    except IOError:
-        logger.error("problem with deleting files, smth with virtual path")
-
-    for element in os.listdir():
-        if os.path.isdir(element):
-            copy_directory(sftp_connection, element)
+    for element in os.listdir(local_path):
+        if os.path.isdir(local_path / element):
+            copy_directory(sftp_connection, local_path / element, posixpath.join(virtual_path, element))
         else:
             try:
-                sftp_connection.put(element, element)
+                sftp_connection.put(str(local_path / element), posixpath.join(virtual_path, element))
             except Exception as e:
                 logger.error(f"problem with putting files {element}")
 
-    os.chdir("..")
-    sftp_connection.chdir("..")
 
-
-def copy_files(sftp_connection, local_map_path: str, virtual_map_path: str):
+def copy_files(sftp_connection, local_path: str, virtual_path: str):
     """copying files to server"""
-    try:
-        sftp_connection.chdir(virtual_map_path)
-    except IOError:
-        logger.error("problem with copying files, smth with virtual path")
+    local_path = Path(local_path).resolve()
+    virtual_path = posixpath.join(".", virtual_path)
 
-    try:
-        os.chdir(local_map_path)
-    except IOError:
-        logger.error("problem with copying files, smth with local path")
-
-    for name in os.listdir():
-        if os.path.isdir(name):
+    for name in os.listdir(local_path):
+        if os.path.isdir(local_path / name):
             try:
-                copy_directory(sftp_connection, name)
+                copy_directory(sftp_connection, local_path / name, posixpath.join(virtual_path, name))
             except Exception as e:
                 logger.error(f"problem with coping directory {name}")
         else:
             try:
-                sftp_connection.put(name, name)
+                sftp_connection.put(str(local_path / name), posixpath.join(virtual_path, name))
             except Exception as e:
                 logger.error(f"problem with putting files {name}")
 
-    sftp_connection.chdir("..")
 
-
-def delete_files(sftp_connection, virtual_map_path: str):
+def delete_files(sftp_connection, virtual_map: str):
     """deleting files from server"""
-    try:
-        sftp_connection.chdir(virtual_map_path)
-    except IOError:
-        logger.error("problem with deleting files, smth with path")
-
-    for name in sftp_connection.listdir():
+    for name in sftp_connection.listdir(virtual_map):
         try:
-            sftp_connection.remove(name)
+            sftp_connection.remove(posixpath.join(virtual_map, name))
         except Exception as e:
             logger.error(f"problem with deleting file {name}")
 
-    sftp_connection.chdir("..")
 
 with sftp_connect(HOST, PORT, USER, PASSWORD) as sftp:
-    delete_files(sftp, virtual)
+    copy_files(sftp, local, virtual)
     copy_files(sftp, local, virtual)
