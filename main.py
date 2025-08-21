@@ -10,20 +10,22 @@ from pathlib import Path
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename='myapp.log', level=logging.INFO)
+logging.basicConfig(
+    filename='myapp.log',
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(name)s: %(message)s'
+)
 
 HOST = os.getenv("HOST")
 PORT = int(os.getenv("PORT"))
 USER = os.getenv("USER")
 PASSWORD = os.getenv("PASSWORD")
 
-virtual = "second_map"
-local = "second_map_example"
-
 
 @contextmanager
 def sftp_connect(host: str, port: int, user: str, password: str):
     """connection to sftp server"""
+
     client = None
     sftp = None
     try:
@@ -54,7 +56,6 @@ def sftp_connect(host: str, port: int, user: str, password: str):
                 sftp.close()
             except Exception as e:
                 logger.error('sftp.close() error')
-
         if client is not None:
             try:
                 client.close()
@@ -62,8 +63,9 @@ def sftp_connect(host: str, port: int, user: str, password: str):
                 logger.error('client.close() error')
 
 
-def copy_directory(sftp_connection, local_path: str, virtual_path):
+def copy_directory(sftp_connection, local_path: Path, virtual_path):
     """recursive coping for directories"""
+
     try:
         sftp_connection.mkdir(virtual_path)
     except Exception as e:
@@ -71,34 +73,50 @@ def copy_directory(sftp_connection, local_path: str, virtual_path):
 
     for element in os.listdir(local_path):
         if os.path.isdir(local_path / element):
-            copy_directory(sftp_connection, local_path / element, posixpath.join(virtual_path, element))
+            copy_directory(
+                sftp_connection,
+                local_path / element,
+                posixpath.join(virtual_path, element)
+            )
         else:
             try:
-                sftp_connection.put(str(local_path / element), posixpath.join(virtual_path, element))
+                sftp_connection.put(
+                    local_path / element,
+                    posixpath.join(virtual_path, element)
+                )
             except Exception as e:
                 logger.error(f"problem with putting files {element}")
 
 
 def copy_files(sftp_connection, local_path: str, virtual_path: str):
     """copying files to server"""
+
     local_path = Path(local_path).resolve()
     virtual_path = posixpath.join(".", virtual_path)
 
     for name in os.listdir(local_path):
         if os.path.isdir(local_path / name):
             try:
-                copy_directory(sftp_connection, local_path / name, posixpath.join(virtual_path, name))
+                copy_directory(
+                    sftp_connection,
+                    local_path / name,
+                    posixpath.join(virtual_path, name)
+                )
             except Exception as e:
                 logger.error(f"problem with coping directory {name}")
         else:
             try:
-                sftp_connection.put(str(local_path / name), posixpath.join(virtual_path, name))
+                sftp_connection.put(
+                    local_path / name,
+                    posixpath.join(virtual_path, name)
+                )
             except Exception as e:
                 logger.error(f"problem with putting files {name}")
 
 
 def delete_files(sftp_connection, virtual_map: str):
     """deleting files from server"""
+
     for name in sftp_connection.listdir(virtual_map):
         try:
             sftp_connection.remove(posixpath.join(virtual_map, name))
@@ -107,5 +125,7 @@ def delete_files(sftp_connection, virtual_map: str):
 
 
 with sftp_connect(HOST, PORT, USER, PASSWORD) as sftp:
-    copy_files(sftp, local, virtual)
-    copy_files(sftp, local, virtual)
+    delete_files(sftp, "second_map")
+    copy_files(sftp, "second_map_example", "second_map")
+    # delete_files(sftp, "first_map")
+    # copy_files(sftp, "first_map_example", "first_map")
