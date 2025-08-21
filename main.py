@@ -123,9 +123,9 @@ def delete_files(sftp_connection, virtual_map: str):
         except Exception as e:
             logger.error(f"problem with deleting file {name}")
 
-
-with sftp_connect(HOST, PORT, USER, PASSWORD) as sftp:
-    delete_files(sftp, "second_map")
-    copy_files(sftp, "second_map_example", "second_map")
+if __name__ == "__main__":
+    with sftp_connect(HOST, PORT, USER, PASSWORD) as sftp:
+        delete_files(sftp, "second_map")
+        copy_files(sftp, "second_map_example", "second_map")
     # delete_files(sftp, "first_map")
     # copy_files(sftp, "first_map_example", "first_map")
