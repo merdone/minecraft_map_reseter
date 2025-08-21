@@ -1,83 +1,24 @@
-import asyncio
-import json
-import logging
-from pathlib import Path
-from os import getenv
-
-from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, html
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
-from main import sftp_connect, delete_files, copy_files
+from config import Config
 
-DATA_DIR = Path("./data")
+from bot.utils.bot_utils import *
+from utils.server_utils import *
+from utils.storage_utils import *
+
+DATA_DIR = Path("../data")
 DATA_DIR.mkdir(exist_ok=True)
 CONFIG_PATH = DATA_DIR / "configs.json"  # { "<user_id>": [{"local":"...", "remote":"..."}] }
 
-load_dotenv()
-TOKEN = getenv("BOT_TOKEN")
-
 dp = Dispatcher()
+
 logging.basicConfig(
-    filename='myapp.log',
     level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(name)s: %(message)s'
 )
-
-
-def load_storage() -> dict:
-    if CONFIG_PATH.exists():
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    return {}
-
-
-def save_storage(data: dict):
-    CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def add_config(user_id: int, local: str, remote: str):
-    data = load_storage()
-    arr = data.get(str(user_id), [])
-    if not any(c["local"] == local and c["remote"] == remote for c in arr):
-        arr.append({"local": local, "remote": remote})
-    data[str(user_id)] = arr
-    save_storage(data)
-
-
-def get_configs(user_id: int):
-    return load_storage().get(str(user_id), [])
-
-
-def remove_config(user_id: int, index: int) -> bool:
-    data = load_storage()
-    arr = data.get(str(user_id), [])
-    if 0 <= index < len(arr):
-        arr.pop(index)
-        data[str(user_id)] = arr
-        save_storage(data)
-        return True
-    return False
-
-
-def parse_quoted_args(text: str):
-    parts = []
-    current = []
-    in_quotes = False
-    for char in text:
-        if char == '"':
-            in_quotes = not in_quotes
-            if not in_quotes:
-                parts.append("".join(current).strip())
-                current = []
-        else:
-            if in_quotes:
-                current.append(char)
-    if len(parts) >= 2:
-        return parts[0], parts[1]
-    return None
 
 
 def build_main_kb(configs):
@@ -94,22 +35,21 @@ def build_main_kb(configs):
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
-async def deploy_config(message: Message, cfg: dict):
+async def deploy_config(message: Message, cfg: dict, c: Config):
     """connect to server and deploy"""
+
     await message.answer(
         f"• local: <code>{html.quote(cfg['local'])}</code>\n"
         f"• remote: <code>{html.quote(cfg['remote'])}</code>"
     )
 
-    HOST = getenv("HOST")
-    PORT = int(getenv("PORT"))
-    USER = getenv("USER")
-    PASSWORD = getenv("PASSWORD")
+    with sftp_connect(c.host, c.port, c.user, c.password) as sftp:
+        delete_files(sftp, cfg['remote'])
+        copy_files(sftp, cfg['local'], cfg['remote'])
 
-    with sftp_connect(HOST, PORT, USER, PASSWORD) as sftp:
-        delete_files(sftp, "second_map")
-        copy_files(sftp, "second_map_example", "second_map")
-    # TODO: вызови свой деплой здесь
+    await message.answer(
+        f"• Successful \n<code>/mv load {cfg['remote']}</code>\n"
+    )
 
 
 @dp.message(CommandStart())
@@ -204,7 +144,7 @@ async def cmd_remove(message: Message):
 
 # ====== BUTTONS ======
 @dp.message(F.text.startswith("▶️ "))
-async def on_deploy_button(message: Message):
+async def on_deploy_button(message: Message, c: Config):
     txt = message.text
 
     try:
@@ -215,7 +155,7 @@ async def on_deploy_button(message: Message):
     except Exception as e:
         return await message.answer("Не смог определить конфигурацию 🤔")
 
-    await deploy_config(message, cfg)
+    await deploy_config(message, cfg, c)
 
 
 @dp.message(F.text == "🗂 List")
@@ -238,13 +178,8 @@ async def btn_remove_hint(message: Message):
     await message.answer('For remove you can use:\n<code>/remove N</code>\nнапример: <code>/remove 0</code>')
 
 
-# ====== BOOT ======
-async def main():
-    if not TOKEN:
-        raise SystemExit("BOT_TOKEN не задан в .env")
-    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+async def main(config: Config):
+    bot = Bot(token=config.bot_token,
+              default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp.workflow_data.update({"config": config})
+    await dp.start_polling(bot, c=config)
